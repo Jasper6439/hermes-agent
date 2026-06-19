@@ -8273,13 +8273,18 @@ def _(rid, params, pdb, conn) -> dict:
     return _ok(rid, {"project": proj.to_dict() if proj else None, "cwd": cwd, "branch": _git_branch_for_cwd(cwd)})
 
 
-def _discover_repos_payload(db) -> list[dict]:
+def _discover_repos_payload(db, *, conn=None, backfill: bool = True) -> list[dict]:
     """Merge filesystem-scanned repos (cached) with session-derived repo roots.
 
     Repo-first: the disk scan (persisted by `projects.record_repos`) surfaces
     repos even with zero hermes sessions. Session-derived roots cover repos
     outside the scan roots. Both are junk-filtered (hermes home subtree + bare
     home) and carry their session totals for the overview.
+
+    ``conn`` reuses an already-open projects.db connection (the tree path holds
+    one); ``backfill`` persists resolved roots back onto session rows — kept off
+    the per-turn tree path (grouping uses the live git resolver regardless) and
+    done only on the explicit discover/record refresh.
     """
     from hermes_constants import get_hermes_home
 
@@ -8310,17 +8315,19 @@ def _discover_repos_payload(db) -> list[dict]:
         agg["sessions"] += int(row.get("sessions") or 0)
         agg["last_active"] = max(agg["last_active"], float(row.get("last_active") or 0))
 
-    try:
-        db.backfill_repo_roots(cwd_to_root)
-    except Exception:
-        logger.debug("failed to backfill repo roots", exc_info=True)
+    if backfill:
+        try:
+            db.backfill_repo_roots(cwd_to_root)
+        except Exception:
+            logger.debug("failed to backfill repo roots", exc_info=True)
 
-    # Filesystem-scanned roots from the cache (may have zero sessions).
+    # Filesystem-scanned roots from the cache (may have zero sessions). Reuse the
+    # caller's projects.db connection when given, else open a short-lived one.
     try:
         from hermes_cli import projects_db as pdb
 
-        with pdb.connect_closing() as conn:
-            for entry in pdb.list_discovered_repos(conn):
+        def _read(c) -> None:
+            for entry in pdb.list_discovered_repos(c):
                 root = str(entry.get("root") or "")
                 if not root or _is_junk(root):
                     continue
@@ -8328,6 +8335,12 @@ def _discover_repos_payload(db) -> list[dict]:
                 if entry.get("label"):
                     agg["label"] = entry["label"]
                 agg["last_active"] = max(agg["last_active"], float(entry.get("last_seen") or 0))
+
+        if conn is not None:
+            _read(conn)
+        else:
+            with pdb.connect_closing() as own:
+                _read(own)
     except Exception:
         logger.debug("failed to read discovered repo cache", exc_info=True)
 
@@ -8408,8 +8421,16 @@ def _project_tree_row(r: dict) -> dict:
     }
 
 
-def _project_tree_inputs(db, session_limit: int) -> tuple[list[dict], list[dict], list[dict], str | None]:
-    """Gather (sessions, projects, discovered_repos, active_id) for build_tree."""
+def _project_tree_inputs(
+    db, session_limit: int, *, include_discovered: bool
+) -> tuple[list[dict], list[dict], list[dict], str | None]:
+    """Gather (sessions, projects, discovered_repos, active_id) for build_tree.
+
+    ``include_discovered`` is the zero-session-repo overview tier; the entered
+    view (drill-in) skips it entirely — it only needs the project it's showing,
+    which already has sessions — avoiding the distinct-cwd scan + git probes on
+    that per-turn path. One projects.db connection serves both reads.
+    """
     rows = db.list_sessions_rich(
         limit=session_limit,
         offset=0,
@@ -8426,16 +8447,21 @@ def _project_tree_inputs(db, session_limit: int) -> tuple[list[dict], list[dict]
     with pdb.connect_closing() as conn:
         projects = [p.to_dict() for p in pdb.list_projects(conn)]
         active_id = pdb.get_active_id(conn)
+        # backfill stays off the hot tree path — grouping uses the live resolver.
+        discovered = _discover_repos_payload(db, conn=conn, backfill=False) if include_discovered else []
 
-    discovered = _discover_repos_payload(db)
     return sessions, projects, discovered, active_id
 
 
-def _build_project_tree(db, *, preview_limit: int, hydrate: bool, session_limit: int) -> tuple[dict, str | None]:
+def _build_project_tree(
+    db, *, preview_limit: int, hydrate: bool, session_limit: int, include_discovered: bool
+) -> tuple[dict, str | None]:
     """Gather inputs and run the one authoritative builder. Returns (tree, active_id)."""
     from tui_gateway import project_tree
 
-    sessions, projects, discovered, active_id = _project_tree_inputs(db, session_limit)
+    sessions, projects, discovered, active_id = _project_tree_inputs(
+        db, session_limit, include_discovered=include_discovered
+    )
     tree = project_tree.build_tree(
         projects, sessions, discovered, _resolve_cwd_git, preview_limit=preview_limit, hydrate=hydrate
     )
@@ -8459,6 +8485,7 @@ def _(rid, params: dict) -> dict:
             preview_limit=int(params.get("preview_limit") or 3),
             hydrate=False,
             session_limit=int(params.get("session_limit") or 2000),
+            include_discovered=True,
         )
         return _ok(
             rid,
@@ -8482,8 +8509,11 @@ def _(rid, params: dict) -> dict:
         if db is None:
             return _ok(rid, {"project": None})
 
+        # Drill-in only needs the entered project (which has sessions), so skip
+        # the zero-session discovery tier entirely.
         tree, _active = _build_project_tree(
-            db, preview_limit=0, hydrate=True, session_limit=int(params.get("session_limit") or 5000)
+            db, preview_limit=0, hydrate=True, session_limit=int(params.get("session_limit") or 5000),
+            include_discovered=False,
         )
         proj = next((p for p in tree["projects"] if p["id"] == project_id), None)
         return _ok(rid, {"project": proj})
