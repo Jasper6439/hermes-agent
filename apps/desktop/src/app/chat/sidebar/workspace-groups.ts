@@ -250,45 +250,72 @@ export function placeLiveSession(session: SessionInfo, explicitProjects: Project
 const upsertSession = (rows: SessionInfo[], session: SessionInfo): SessionInfo[] =>
   [session, ...rows.filter(row => row.id !== session.id)].sort((a, b) => b.started_at - a.started_at)
 
-/** Overlay live sessions into an entered project's lanes (instant + working state). */
-export function overlayLiveLanes(
-  project: SidebarProjectTree,
-  live: SessionInfo[],
-  explicitProjects: ProjectInfo[]
-): SidebarProjectTree {
-  const mine = live
-    .map(session => ({ session, placement: placeLiveSession(session, explicitProjects) }))
-    .filter((entry): entry is { session: SessionInfo; placement: LiveLanePlacement } =>
-      Boolean(entry.placement && entry.placement.projectId === project.id)
-    )
+/**
+ * The lane a live session belongs to WITHIN a known repo root, by path — the
+ * entered project already knows its repo roots, so we don't need the session's
+ * (often-unset, on a fresh row) git_repo_root. Mirrors the backend's lane ids:
+ * main checkout -> branch lane, `.worktrees/t_<hex>` -> kanban, any other
+ * `.worktrees/<slug>` -> that worktree's own lane.
+ */
+function liveLaneForRepo(repoRoot: string, session: SessionInfo): null | SidebarSessionGroup {
+  const cwd = (session.cwd || '').trim()
 
-  if (!mine.length) {
+  if (!cwd || !isPathUnder(repoRoot, cwd)) {
+    return null
+  }
+
+  const wt = cwd.match(/^(.*[/\\]\.worktrees)[/\\]([^/\\]+)/)
+
+  if (wt) {
+    const [worktreeRoot, worktreesDir, slug] = [wt[0], wt[1], wt[2]]
+
+    return /^t_[0-9a-f]+$/.test(slug)
+      ? { id: `${repoRoot}::kanban`, isKanban: true, isMain: false, label: 'kanban', path: worktreesDir, sessions: [] }
+      : { id: worktreeRoot, isMain: false, label: slug, path: worktreeRoot, sessions: [] }
+  }
+
+  const branch = (session.git_branch || '').trim() || DEFAULT_BRANCH_LABEL
+
+  return { id: branchLaneId(repoRoot, branch), isMain: true, label: branch, path: repoRoot, sessions: [] }
+}
+
+/** Overlay live sessions into an entered project's lanes (instant + working state). */
+export function overlayLiveLanes(project: SidebarProjectTree, live: SessionInfo[]): SidebarProjectTree {
+  // Longest root first so a nested repo wins the prefix match.
+  const ranked = project.repos.filter(repo => repo.path).sort((a, b) => (b.path?.length ?? 0) - (a.path?.length ?? 0))
+  const lanesByRepo = new Map(project.repos.map(repo => [repo.id, repo.groups.map(g => ({ ...g, sessions: [...g.sessions] }))]))
+  let changed = false
+
+  for (const session of live) {
+    const repo = ranked.find(r => isPathUnder(r.path ?? '', (session.cwd || '').trim()))
+    const placed = repo && liveLaneForRepo(repo.path ?? '', session)
+
+    if (!repo || !placed) {
+      continue
+    }
+
+    const lanes = lanesByRepo.get(repo.id)!
+    const lane =
+      lanes.find(g => g.id === placed.id) ??
+      (placed.isMain ? lanes.find(g => g.isMain && g.label.toLowerCase() === placed.label.toLowerCase()) : undefined)
+
+    if (lane) {
+      lane.sessions = upsertSession(lane.sessions, session)
+    } else {
+      lanes.push({ ...placed, sessions: [session] })
+    }
+
+    changed = true
+  }
+
+  if (!changed) {
     return project
   }
 
-  const single = project.repos.length <= 1
-
   const repos = project.repos.map(repo => {
-    const lanes = repo.groups.map(group => ({ ...group, sessions: [...group.sessions] }))
+    const lanes = sortWorktreeGroups(lanesByRepo.get(repo.id)!)
 
-    for (const { session, placement } of mine) {
-      if (!single && repo.id !== placement.repoRoot) {
-        continue
-      }
-
-      let lane =
-        lanes.find(group => group.id === placement.laneId) ??
-        lanes.find(group => group.isMain && group.label.toLowerCase() === placement.laneLabel.toLowerCase())
-
-      if (!lane) {
-        lane = { id: placement.laneId, isMain: true, label: placement.laneLabel, path: placement.lanePath, sessions: [] }
-        lanes.push(lane)
-      }
-
-      lane.sessions = upsertSession(lane.sessions, session)
-    }
-
-    return { ...repo, groups: sortWorktreeGroups(lanes), sessionCount: lanes.reduce((n, group) => n + group.sessions.length, 0) }
+    return { ...repo, groups: lanes, sessionCount: lanes.reduce((n, g) => n + g.sessions.length, 0) }
   })
 
   return { ...project, repos, sessionCount: repos.reduce((n, repo) => n + repo.sessionCount, 0) }

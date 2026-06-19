@@ -872,10 +872,10 @@ export function ChatSidebar({
     // Overlay live $sessions so a session started here appears instantly with
     // its working arc, exactly like the flat Recents list (the backend snapshot
     // catches up on the next tree refresh).
-    const live = overlayLiveLanes(hydrated, agentSessions, projects)
+    const live = overlayLiveLanes(hydrated, agentSessions)
 
     return { ...live, repos: orderRepos(live.repos) }
-  }, [overviewEnteredProject, enteredProjectTree, agentSessions, projects, orderRepos])
+  }, [overviewEnteredProject, enteredProjectTree, agentSessions, orderRepos])
 
   const scopedRepoPaths = useMemo(
     () =>

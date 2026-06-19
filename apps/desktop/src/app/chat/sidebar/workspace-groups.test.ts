@@ -210,11 +210,44 @@ describe('overlayLiveLanes', () => {
     })
     const live = [makeSession('/www/app', { id: 'fresh', git_branch: 'main' })]
 
-    const overlaid = overlayLiveLanes(project, live, [])
+    const overlaid = overlayLiveLanes(project, live)
     const lane = overlaid.repos[0].groups.find(g => g.label === 'main')
 
     expect(lane?.sessions.map(session => session.id)).toContain('fresh')
     expect(overlaid.sessionCount).toBe(1)
+  })
+
+  it('injects a session created in a fresh worktree into that worktree lane (no git_repo_root yet)', () => {
+    // The brand-new session row has only a cwd — no git_repo_root. The entered
+    // project knows its repo root, so the worktree session still lands in its
+    // own lane (not kanban, not skipped) optimistically.
+    const project = projectNode({
+      id: '/www/app',
+      isAuto: true,
+      repos: [{ id: '/www/app', label: 'app', path: '/www/app', sessionCount: 0, groups: [] }]
+    })
+    const live = [makeSession('/www/app/.worktrees/baby', { id: 'fresh' })]
+
+    const overlaid = overlayLiveLanes(project, live)
+    const lane = overlaid.repos[0].groups.find(g => g.id === '/www/app/.worktrees/baby')
+
+    expect(lane?.label).toBe('baby')
+    expect(lane?.sessions.map(s => s.id)).toEqual(['fresh'])
+  })
+
+  it('folds a kanban-task worktree session into the kanban lane', () => {
+    const project = projectNode({
+      id: '/www/app',
+      isAuto: true,
+      repos: [{ id: '/www/app', label: 'app', path: '/www/app', sessionCount: 0, groups: [] }]
+    })
+    const live = [makeSession('/www/app/.worktrees/t_abc12345', { id: 'k' })]
+
+    const overlaid = overlayLiveLanes(project, live)
+    const lane = overlaid.repos[0].groups.find(g => g.isKanban)
+
+    expect(lane?.id).toBe('/www/app::kanban')
+    expect(lane?.sessions.map(s => s.id)).toEqual(['k'])
   })
 
   it('does not duplicate a session already present in a backend lane', () => {
@@ -232,7 +265,7 @@ describe('overlayLiveLanes', () => {
       ]
     })
 
-    const overlaid = overlayLiveLanes(project, [existing], [])
+    const overlaid = overlayLiveLanes(project, [existing])
 
     expect(overlaid.repos[0].groups.flatMap(g => g.sessions.map(s => s.id))).toEqual(['dup'])
   })
