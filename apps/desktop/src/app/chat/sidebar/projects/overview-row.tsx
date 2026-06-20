@@ -10,8 +10,17 @@ import { ProjectMenu } from './project-menu'
 import type { SidebarProjectTree } from './workspace-groups'
 import { WorkspaceAddButton } from './workspace-header'
 
-// Leading glyph shared by the overview row + scope banner.
+// Leading glyph shared by the overview row + scope banner: a chosen codicon
+// (tinted by the project color), else a color dot, else the default folder.
 export function projectIcon(project: SidebarProjectTree) {
+  if (project.icon) {
+    return (
+      <span className="grid shrink-0 place-items-center" style={project.color ? { color: project.color } : undefined}>
+        <Codicon className={project.color ? undefined : 'text-(--ui-text-tertiary)'} name={project.icon} size="0.8125rem" />
+      </span>
+    )
+  }
+
   if (project.color) {
     return <span aria-hidden="true" className="size-2 shrink-0 rounded-full" style={{ backgroundColor: project.color }} />
   }

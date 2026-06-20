@@ -249,7 +249,15 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectI
 }
 
 export async function renameProject(id: string, name: string): Promise<void> {
-  await gatewayRequest('projects.update', { id, name })
+  await updateProject(id, { name })
+}
+
+// Patch top-level project fields (name / appearance). Only provided keys change.
+export async function updateProject(
+  id: string,
+  patch: { name?: string; color?: null | string; icon?: null | string }
+): Promise<void> {
+  await gatewayRequest('projects.update', { id, ...patch })
   await refreshProjects()
   await refreshProjectTree()
 }
@@ -287,6 +295,8 @@ export interface ProjectDialogState {
   mode: 'add-folder' | 'create' | 'rename'
   projectId?: string
   name?: string
+  color?: null | string
+  icon?: null | string
 }
 
 export const $projectDialog = atom<null | ProjectDialogState>(null)
@@ -295,8 +305,8 @@ export function openProjectCreate(): void {
   $projectDialog.set({ mode: 'create' })
 }
 
-export function openProjectRename(project: { id: string; name: string }): void {
-  $projectDialog.set({ mode: 'rename', name: project.name, projectId: project.id })
+export function openProjectRename(project: { id: string; name: string; color?: null | string; icon?: null | string }): void {
+  $projectDialog.set({ mode: 'rename', name: project.name, projectId: project.id, color: project.color, icon: project.icon })
 }
 
 export function openProjectAddFolder(project: { id: string; name: string }): void {

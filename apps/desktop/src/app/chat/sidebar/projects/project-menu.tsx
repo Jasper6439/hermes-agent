@@ -78,7 +78,9 @@ export function ProjectMenu({
         <DropdownMenuContent align="end" className="w-48" sideOffset={6}>
           {!project.isAuto && (
             <>
-              <DropdownMenuItem onSelect={() => openProjectRename(target)}>
+              <DropdownMenuItem
+                onSelect={() => openProjectRename({ color: project.color, icon: project.icon, id: project.id, name: project.label })}
+              >
                 <Codicon name="edit" size="0.875rem" />
                 <span>{p.menuRename}</span>
               </DropdownMenuItem>

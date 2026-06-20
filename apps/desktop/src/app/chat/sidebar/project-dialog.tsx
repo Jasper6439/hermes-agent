@@ -14,8 +14,67 @@ import {
   closeProjectDialog,
   createProject,
   pickProjectFolder,
-  renameProject
+  updateProject
 } from '@/store/projects'
+
+// Curated, glanceable appearance options. Colors tint the project's leading
+// glyph in the sidebar; icons replace the default folder.
+const PALETTE = ['#f59e0b', '#3b82f6', '#10b981', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316', '#64748b']
+
+const ICONS = [
+  'folder-library', 'repo', 'rocket', 'beaker', 'flame', 'device-desktop',
+  'device-mobile', 'broadcast', 'book', 'globe', 'terminal', 'dashboard',
+  'heart', 'package', 'target', 'star-full'
+]
+
+function AppearancePicker({
+  color,
+  icon,
+  onColor,
+  onIcon
+}: {
+  color: null | string
+  icon: null | string
+  onColor: (next: null | string) => void
+  onIcon: (next: null | string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {PALETTE.map(c => (
+          <button
+            aria-label={`Color ${c}`}
+            className={cn(
+              'size-5 rounded-full ring-offset-2 ring-offset-background transition',
+              color === c && 'ring-2 ring-foreground'
+            )}
+            key={c}
+            onClick={() => onColor(color === c ? null : c)}
+            style={{ backgroundColor: c }}
+            type="button"
+          />
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        {ICONS.map(name => (
+          <button
+            aria-label={name}
+            className={cn(
+              'grid size-7 place-items-center rounded-md text-(--ui-text-tertiary) transition hover:bg-(--ui-control-hover-background)',
+              icon === name && 'bg-(--ui-control-active-background) text-foreground'
+            )}
+            key={name}
+            onClick={() => onIcon(icon === name ? null : name)}
+            style={icon === name && color ? { color } : undefined}
+            type="button"
+          >
+            <Codicon name={name} size="0.875rem" />
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 // Single dialog mounted once in the sidebar; it renders create / rename /
 // add-folder flows driven by the $projectDialog atom. Folders are chosen via
@@ -29,6 +88,8 @@ export function ProjectDialog() {
 
   const [name, setName] = useState('')
   const [folders, setFolders] = useState<string[]>([])
+  const [color, setColor] = useState<null | string>(null)
+  const [icon, setIcon] = useState<null | string>(null)
   const [submitting, setSubmitting] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
 
@@ -36,13 +97,15 @@ export function ProjectDialog() {
     if (open) {
       setName(state?.name ?? '')
       setFolders([])
+      setColor(state?.color ?? null)
+      setIcon(state?.icon ?? null)
       setSubmitting(false)
 
       if (mode !== 'add-folder') {
         window.setTimeout(() => nameRef.current?.select(), 0)
       }
     }
-  }, [open, mode, state?.name])
+  }, [open, mode, state?.name, state?.color, state?.icon])
 
   const onOpenChange = (next: boolean) => {
     if (!next) {
@@ -90,7 +153,7 @@ export function ProjectDialog() {
       setSubmitting(true)
 
       try {
-        await renameProject(state.projectId, trimmed)
+        await updateProject(state.projectId, { color, icon, name: trimmed })
         closeProjectDialog()
       } catch (err) {
         notifyError(err, p.createFailed)
@@ -111,7 +174,7 @@ export function ProjectDialog() {
       setSubmitting(true)
 
       try {
-        await createProject({ name: trimmed, folders, use: true })
+        await createProject({ color: color ?? undefined, folders, icon: icon ?? undefined, name: trimmed, use: true })
         closeProjectDialog()
       } catch (err) {
         notifyError(err, p.createFailed)
@@ -148,6 +211,10 @@ export function ProjectDialog() {
             ref={nameRef}
             value={name}
           />
+        )}
+
+        {mode !== 'add-folder' && (
+          <AppearancePicker color={color} icon={icon} onColor={setColor} onIcon={setIcon} />
         )}
 
         {mode === 'create' && (
