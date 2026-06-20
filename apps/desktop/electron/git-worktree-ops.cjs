@@ -98,6 +98,43 @@ function slugify(name) {
   return slug || 'work'
 }
 
+// A brand-new project folder isn't a git repo — and a freshly-init'd one has no
+// commit to branch from — so `git worktree add` would fail. Make the dir a repo
+// with a root commit on the user's behalf so worktrees "just work". No-op for a
+// repo that already has commits; never touches the user's files (the seed commit
+// is `--allow-empty`), and never inits a dir that already lives inside a repo.
+async function ensureGitRepo(gitBin, dir) {
+  let needsRoot = false
+
+  try {
+    const inside = (await runGit(gitBin, ['rev-parse', '--is-inside-work-tree'], dir)).trim()
+
+    if (inside !== 'true') {
+      await runGit(gitBin, ['init'], dir)
+      needsRoot = true
+    } else {
+      // Repo exists; a worktree still needs a HEAD to branch from.
+      try {
+        await runGit(gitBin, ['rev-parse', '--verify', 'HEAD'], dir)
+      } catch {
+        needsRoot = true
+      }
+    }
+  } catch {
+    await runGit(gitBin, ['init'], dir)
+    needsRoot = true
+  }
+
+  if (needsRoot) {
+    // Inline identity so the seed commit lands even with no global git config.
+    await runGit(
+      gitBin,
+      ['-c', 'user.email=hermes@localhost', '-c', 'user.name=Hermes', 'commit', '--allow-empty', '-m', 'Initial commit'],
+      dir
+    )
+  }
+}
+
 // Resolve the repo's MAIN worktree root, so `.worktrees/` always nests under the
 // primary checkout even when called from a linked worktree.
 async function mainRoot(gitBin, cwd) {
@@ -121,6 +158,9 @@ function uniqueDir(base) {
 
 async function addWorktree(repoPath, options, gitBin) {
   const resolved = resolveRequestedPathForIpc(repoPath, { purpose: 'Worktree add' })
+  // A new project's folder may not be a git repo yet — init it (with a root
+  // commit) so the worktree has something to branch from.
+  await ensureGitRepo(gitBin, resolved)
   const root = await mainRoot(gitBin, resolved)
   const opts = options || {}
   const slug = slugify(opts.name || `work-${Date.now().toString(36)}`)
@@ -166,6 +206,7 @@ async function removeWorktree(repoPath, worktreePath, options, gitBin) {
 
 module.exports = {
   addWorktree,
+  ensureGitRepo,
   listWorktrees,
   parseWorktrees,
   removeWorktree

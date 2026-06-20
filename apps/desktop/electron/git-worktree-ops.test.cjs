@@ -1,9 +1,13 @@
 'use strict'
 
 const assert = require('node:assert/strict')
+const { execFileSync } = require('node:child_process')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 const test = require('node:test')
 
-const { parseWorktrees } = require('./git-worktree-ops.cjs')
+const { ensureGitRepo, parseWorktrees } = require('./git-worktree-ops.cjs')
 
 test('parseWorktrees: main checkout + linked worktree', () => {
   const out = [
@@ -38,4 +42,24 @@ test('parseWorktrees: detached + locked flags', () => {
 
 test('parseWorktrees: empty input', () => {
   assert.deepEqual(parseWorktrees(''), [])
+})
+
+test('ensureGitRepo: inits a plain dir with a root commit so worktrees branch', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-wt-'))
+  const git = (...args) => execFileSync('git', args, { cwd: dir }).toString().trim()
+
+  try {
+    await ensureGitRepo('git', dir)
+    assert.match(git('rev-parse', '--verify', 'HEAD'), /^[0-9a-f]{7,}$/)
+
+    // The whole point: a worktree can now branch off the seeded root commit.
+    execFileSync('git', ['worktree', 'add', '-b', 'wt', path.join(dir, '.worktrees', 'wt')], { cwd: dir })
+    assert.ok(fs.existsSync(path.join(dir, '.worktrees', 'wt')))
+
+    // Idempotent: an already-committed repo gets no extra commit.
+    await ensureGitRepo('git', dir)
+    assert.equal(git('rev-list', '--count', 'HEAD'), '1')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
