@@ -301,28 +301,43 @@ def _build_repos(sessions: list[dict], resolve: Optional[Resolve], hydrate: bool
 # ---------------------------------------------------------------------------
 
 
-def _project_match(projects: list[dict], target: str) -> tuple[Optional[dict], int]:
-    """The project owning ``target`` by longest-prefix folder match + its depth."""
-    target = (target or "").strip()
-    best: Optional[dict] = None
-    best_len = -1
-    if target:
+class _FolderIndex:
+    """Maps a normalized folder path → (owning project, depth), so a session is
+    matched to its project by walking its cwd's ancestors (O(path depth) dict
+    lookups) instead of scanning every project × folder per session — the
+    difference between O(sessions × projects) and O(sessions) at power-user scale.
+    """
+
+    def __init__(self, projects: list[dict]) -> None:
+        self._by_path: dict[str, tuple[dict, int]] = {}
         for project in projects:
             for folder in project.get("folders") or []:
-                path = folder.get("path") or ""
-                if _is_path_under(path, target):
-                    length = len(_segments(path))
-                    if length > best_len:
-                        best_len = length
-                        best = project
-    return best, best_len
+                segs = _segments(folder.get("path") or "")
+                if not segs:
+                    continue
+                key = "/".join(segs)
+                depth = len(segs)
+                # Deepest folder wins; ties keep the first project (scan order).
+                existing = self._by_path.get(key)
+                if existing is None or depth > existing[1]:
+                    self._by_path[key] = (project, depth)
+
+    def match(self, target: str) -> tuple[Optional[dict], int]:
+        """Owning project for ``target`` by longest ancestor folder, + its depth."""
+        segs = _segments(target or "")
+        # Longest prefix first → deepest (most specific) folder wins.
+        for end in range(len(segs), 0, -1):
+            hit = self._by_path.get("/".join(segs[:end]))
+            if hit:
+                return hit
+        return None, -1
 
 
-def _project_for_path(projects: list[dict], target: str) -> Optional[dict]:
-    return _project_match(projects, target)[0]
+def _project_for_path(index: _FolderIndex, target: str) -> Optional[dict]:
+    return index.match(target)[0]
 
 
-def _project_for_session(session: dict, projects: list[dict], resolve: Optional[Resolve]) -> Optional[dict]:
+def _project_for_session(session: dict, index: _FolderIndex, resolve: Optional[Resolve]) -> Optional[dict]:
     cwd = (session.get("cwd") or "").strip()
     if not cwd:
         return None
@@ -332,7 +347,7 @@ def _project_for_session(session: dict, projects: list[dict], resolve: Optional[
     best: Optional[dict] = None
     best_len = -1
     for target in candidates:
-        match, length = _project_match(projects, target)
+        match, length = index.match(target)
         if match and length > best_len:
             best_len = length
             best = match
@@ -398,11 +413,12 @@ def build_tree(
     """
     active_projects = [p for p in projects if not p.get("archived")]
     _junk = is_junk_root or (lambda _root: False)
+    folder_index = _FolderIndex(active_projects)
 
     by_project: dict[str, list[dict]] = {}
     unowned: list[dict] = []
     for session in sessions:
-        owner = _project_for_session(session, active_projects, resolve)
+        owner = _project_for_session(session, folder_index, resolve)
         if owner:
             by_project.setdefault(owner["id"], []).append(session)
         else:
@@ -479,7 +495,7 @@ def build_tree(
             continue
         info = resolve(raw_root) if resolve else None
         root = (info or {}).get("repo_root") or raw_root
-        if root in seen or _junk(root) or _project_for_path(active_projects, root):
+        if root in seen or _junk(root) or _project_for_path(folder_index, root):
             continue
         seen.add(root)
         label = repo.get("label") or base_name(root) or root

@@ -254,6 +254,31 @@ def test_discovered_repo_owned_by_explicit_project_is_not_duplicated():
     assert [p["id"] for p in tree["projects"] if p["path"] == "/www/app"] == ["p_app"]
 
 
+def test_nested_project_folders_pick_the_deepest_match():
+    # The folder index must resolve a session to its most-specific (deepest)
+    # project folder, not just any ancestor.
+    outer = _project("p_outer", "Outer", ["/work"])
+    inner = _project("p_inner", "Inner", ["/work/app"])
+    resolve = _resolver(
+        {
+            "/work/app": ("/work/app", "/work/app"),
+            "/work/other": ("/work/other", "/work/other"),
+        }
+    )
+
+    tree = pt.build_tree(
+        [outer, inner],
+        [_session("/work/app", branch="main"), _session("/work/other", branch="main")],
+        [],
+        resolve,
+        hydrate=True,
+    )
+    by_id = {p["id"]: p for p in tree["projects"]}
+
+    assert by_id["p_inner"]["sessionCount"] == 1  # /work/app → deepest folder wins
+    assert by_id["p_outer"]["sessionCount"] == 1  # /work/other → only the outer project
+
+
 def test_junk_root_never_becomes_an_auto_project():
     # A session whose git root is HERMES_HOME (config/state) must not spawn a
     # phantom project; it falls through to flat Recents (unscoped). A real repo
