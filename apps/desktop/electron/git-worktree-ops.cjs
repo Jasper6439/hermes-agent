@@ -86,6 +86,19 @@ async function listWorktrees(repoPath, gitBin) {
   }
 }
 
+// A git-ref-safe branch name (spaces → "-", drop forbidden chars, trim edges),
+// or "" when nothing usable remains. Mirrors the renderer's `gitRef`, so a bad
+// value can't reach `git` no matter the caller (the GUI also enforces live).
+function sanitizeBranch(name) {
+  return String(name || '')
+    .replace(/\s+/g, '-')
+    .replace(/[^\w./-]/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/\/{2,}/g, '/')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^[-./]+|[-./]+$/g, '')
+}
+
 function slugify(name) {
   const slug = String(name || '')
     .trim()
@@ -164,7 +177,7 @@ async function addWorktree(repoPath, options, gitBin) {
   const root = await mainRoot(gitBin, resolved)
   const opts = options || {}
   const slug = slugify(opts.name || `work-${Date.now().toString(36)}`)
-  const branch = (opts.branch && String(opts.branch).trim()) || `hermes/${slug}`
+  const branch = sanitizeBranch(opts.branch) || `hermes/${slug}`
   const dir = uniqueDir(path.join(root, '.worktrees', slug))
 
   const args = ['worktree', 'add', '-b', branch, dir]
@@ -209,5 +222,6 @@ module.exports = {
   ensureGitRepo,
   listWorktrees,
   parseWorktrees,
-  removeWorktree
+  removeWorktree,
+  sanitizeBranch
 }

@@ -7,7 +7,14 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { ensureGitRepo, parseWorktrees } = require('./git-worktree-ops.cjs')
+const { ensureGitRepo, parseWorktrees, sanitizeBranch } = require('./git-worktree-ops.cjs')
+
+test('sanitizeBranch: spaces → hyphens, forbidden chars dropped, edges trimmed', () => {
+  assert.equal(sanitizeBranch('beach vibes'), 'beach-vibes')
+  assert.equal(sanitizeBranch('feat/cool thing'), 'feat/cool-thing')
+  assert.equal(sanitizeBranch('  wip~^:? '), 'wip')
+  assert.equal(sanitizeBranch('///'), '')
+})
 
 test('parseWorktrees: main checkout + linked worktree', () => {
   const out = [

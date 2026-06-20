@@ -12,8 +12,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
+import { SanitizedInput } from '@/components/ui/sanitized-input'
 import { useI18n } from '@/i18n'
+import { gitRef } from '@/lib/sanitize'
 import { cn } from '@/lib/utils'
 import { notifyError } from '@/store/notifications'
 import { copyPath, revealPath, startWorkInRepo } from '@/store/projects'
@@ -141,10 +142,9 @@ export function StartWorkButton({ repoPath, onStarted }: { repoPath: string; onS
             <DialogTitle>{s.projects.newWorktreeTitle}</DialogTitle>
             <DialogDescription>{s.projects.newWorktreeDesc}</DialogDescription>
           </DialogHeader>
-          <Input
+          <SanitizedInput
             autoFocus
             disabled={pending}
-            onChange={event => setName(event.target.value)}
             onKeyDown={event => {
               if (event.key === 'Enter') {
                 event.preventDefault()
@@ -153,7 +153,9 @@ export function StartWorkButton({ repoPath, onStarted }: { repoPath: string; onS
                 setOpen(false)
               }
             }}
+            onValueChange={setName}
             placeholder={s.projects.branchPlaceholder}
+            sanitize={gitRef}
             value={name}
           />
           <DialogFooter>
