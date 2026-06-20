@@ -17,8 +17,11 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 
 _GIT_TIMEOUT = 1.5
+_WARM_WORKERS = 8
 
 
 def run_git(cwd: str, *args: str) -> str:
@@ -135,3 +138,17 @@ def resolve(cwd: str) -> dict | None:
     if not worktree_root:
         return None
     return {"repo_root": common_repo_root(cwd) or worktree_root, "worktree_root": worktree_root}
+
+
+def warm_roots(cwds: Iterable[str], max_workers: int = _WARM_WORKERS) -> None:
+    """Pre-resolve many cwds' roots in parallel (bounded) so a cold first paint
+    doesn't serialize one git subprocess per session cwd. Single-flight dedupes
+    overlap; results land in the shared cache for the sequential consumers."""
+    pending = sorted({(cwd or "").strip() for cwd in cwds} - {""})
+    if not pending:
+        return
+    if len(pending) == 1:
+        resolve(pending[0])
+        return
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(pending))) as pool:
+        list(pool.map(resolve, pending))

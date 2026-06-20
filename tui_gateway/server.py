@@ -8239,8 +8239,12 @@ def _discover_repos_payload(db, *, conn=None, backfill: bool = True) -> list[dic
 
     # Session-derived roots (common repo root, folding worktrees; cached) +
     # backfill the column so persisted git_repo_root matches the tree grouping.
+    cwd_rows = list(db.distinct_session_cwds())
+    # Warm the per-cwd git probes in parallel so a cold first paint doesn't
+    # serialize one subprocess per distinct cwd before this loop reads the cache.
+    git_probe.warm_roots(str(r.get("cwd") or "") for r in cwd_rows)
     cwd_to_root: dict[str, str] = {}
-    for row in db.distinct_session_cwds():
+    for row in cwd_rows:
         cwd = str(row.get("cwd") or "")
         root = _git_common_repo_root_for_cwd(cwd)
         if not root:
@@ -8378,6 +8382,10 @@ def _project_tree_inputs(
         include_archived=False,
     )
     sessions = [_project_tree_row(r) for r in rows]
+    # Parallel-warm the git cache so build_tree's resolver reads it instead of
+    # cold-probing each cwd in sequence (matters on the drill-in path, which
+    # skips the discovery warm-up below).
+    git_probe.warm_roots(s["cwd"] for s in sessions if s.get("cwd"))
 
     from hermes_cli import projects_db as pdb
 

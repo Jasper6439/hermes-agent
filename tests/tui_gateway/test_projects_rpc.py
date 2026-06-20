@@ -85,6 +85,38 @@ def test_repo_root_cache_is_single_flight(monkeypatch):
     assert calls["n"] == 1
 
 
+def test_warm_roots_probes_in_parallel_and_fills_the_cache(monkeypatch):
+    # Cold first paint must not serialize one git subprocess per cwd.
+    import threading
+    import time
+
+    from tui_gateway import git_probe
+
+    git_probe.invalidate()
+    lock = threading.Lock()
+    live = {"now": 0, "peak": 0, "calls": 0}
+
+    def slow(cwd, *_a):
+        with lock:
+            live["now"] += 1
+            live["calls"] += 1
+            live["peak"] = max(live["peak"], live["now"])
+        time.sleep(0.02)
+        with lock:
+            live["now"] -= 1
+        return cwd  # show-toplevel → cwd is its own root
+
+    monkeypatch.setattr(git_probe, "run_git", slow)
+    cwds = [f"/repo{i}" for i in range(8)]
+    git_probe.warm_roots(cwds, max_workers=8)
+
+    assert live["peak"] > 1  # ran concurrently, not serialized
+    # Cache is warm: resolving again triggers no further probes.
+    before = live["calls"]
+    assert git_probe.repo_root("/repo0") == "/repo0"
+    assert live["calls"] == before
+
+
 def test_create_list_roundtrip(tmp_path):
     created = _call("projects.create", {"name": "Demo", "folders": [str(tmp_path)], "use": True})
     assert created["project"]["slug"] == "demo"
