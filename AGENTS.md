@@ -1,3 +1,88 @@
+# ⚙️ Eleusinian Mysteries — 自定义规范
+
+> 以下是我们对官方 Hermes Agent 开发指南的补充和覆盖。
+> **冲突时以本节为准。** 官方文档见分割线下方。
+
+## Output Language — English (Translation Hook)
+
+**Always output in English.** The local translation hook (`scripts/local_translator.py`) converts English output to Chinese before delivery. This saves ~30-40% output tokens.
+
+- Write all responses in English
+- The gateway translates to Chinese automatically via qwen3.5:0.8b
+- Exception: code blocks, URLs, technical identifiers stay as-is
+- If translation hook fails, English is delivered as fallback
+
+## Telegram 多话题群组配置
+
+**必须**: `group_sessions_per_user: false`
+否则同一用户的所有话题共享一个 session，导致上下文膨胀和 "no response" 错误。
+
+## Tool Selection — `execute_code` > `terminal`
+
+**多步操作用 `execute_code`**，只在单条简单命令时用 `terminal`。
+- `execute_code`: 可导入 hermes_tools，一次执行多步逻辑，省 token
+- `terminal`: 只用于单条命令（systemctl、docker、git 等）
+
+## Code Search — `semblectl_search` First
+
+**Always use `semblectl_search` for code/grep searches.** It compresses tokens ~98%.
+
+- ❌ `terminal` grep/rg — raw output, no token compression
+- ❌ `search_files` — bypasses RTK, raw rg output
+- ✅ `semblectl_search` — token-compressed, registered in `file` toolset
+
+Only fall back to `terminal` grep if `semblectl_search` fails or is unavailable.
+
+### Memory Search — Same Order
+
+**搜历史上下文时，必须按以下顺序：**
+1. Topic Memory 自动注入（零成本，pre_llm_call 自动执行）
+2. `semblectl_search`（首选手动搜索，~95% token 压缩）
+3. `session_search`（最后 fallback，无压缩）
+
+禁止跳过 semblectl_search 直接用 session_search。
+
+## Cron 任务标注规范
+
+**铁律：** 创建 cron 任务时必须在 `prompt` 中标注是否需要 LLM。
+
+格式：`[LLM]` 或 `[no_LLM]`
+
+## 安全铁律
+
+- **密码全部存 Vaultwarden**，引用格式 `"见Vaultwarden: <item-name>"`
+- **`.env` 文件禁止用 `write_file` 工具**（会损坏内容）。写密钥到 `.env` 必须用 terminal `echo`/`printf`
+
+## 文件组织规范
+
+**目录结构（`/home/ubuntu/`）**:
+- `hermes/` — 主系统源码、配置、插件、Dashboard
+- `workspace/` — 项目代码，按 `projects/<name>/` 组织
+- `scripts/` — 工具脚本
+- `media/` — 媒体文件存储
+- `media-stack/` — qBit+Radarr+Sonarr+Jackett Docker栈
+- `obsidian-vault/` — Obsidian vault
+- `vaultwarden/` — 密码管理
+- `honcho-qdrant/` — 记忆系统
+- `qinglong/` — 青龙面板
+- `lib/` — 工具专用venv
+
+**禁止行为**:
+- home根目录禁止放可执行文件、散落脚本、临时文件
+- 创建新目录前先检查是否有功能相近的目录可复用
+- 清理文件前先移到 `.hermes/archive/` 归档
+- 删除目录前先确认无systemd/docker依赖
+
+## OCI 完全控制权
+
+**⚠️ Hermes 有 OCI Tenancy 完全控制权。** 可以管理实例、网络、安全规则、存储等所有资源。
+
+## 宪法引用
+
+**"宪法" = `AGENTS.md`（本文件）。** 当用户说"写进宪法"，就是修改本文件。
+
+---
+
 # Hermes Agent - Development Guide
 
 Instructions for AI coding assistants and developers working on the hermes-agent codebase.
